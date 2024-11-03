@@ -1,5 +1,6 @@
 from flask import Flask, request
 import threading
+from currency_converter import CurrencyConverter # Used to convert inbound donations to GBP
 
 class DataHandler():
     """
@@ -24,9 +25,52 @@ class DataHandler():
 
         self.__donationStack = []
 
-    def _push(self, data) -> None:
+    def _push(self, data:dict) -> None:
+        """
+        Pushes data to the `__donationStack`
+
+        Arguments:
+            data (dict) : The data to push
+        """
         self.__donationStack.append(data)
-        print(type(data))
+        donationHandler = threading.Thread(target=self.handleDonation)
+        donationHandler.start()
+
+    def handleDonation(self):
+        """
+        Processes the top donation, removing unnecessary data then sending it to `GSheetsApplication`
+        Designed to be run in a separate thread.
+        """
+        # First, we need to get the piece of data we'll be processing
+        # since we're on a thread, we need to double check that there actually
+        # is something to process, then if there is, we pop it and begin processing
+        if self.__donationStack == []:
+            return
+        data = self.__donationStack.pop(0)
+
+        # We'll start by double checking that we have recieved a donation update, not anything else.
+        eventType = data["meta"]["event_type"]
+        if not(eventType == "private:direct:donation_updated" or eventType == "public:direct:donation_updated"):
+            return
+        
+        # Now we've confirmed that, we need to get the name of the donor, the amount in GBP, and the comment.
+        datadata = data["data"]
+        name = datadata["donor_name"]
+        comment = datadata["donor_comment"]
+
+        # To get the amount, we must convert to GBP to keep things consistent
+        c = CurrencyConverter()
+        amount = c.convert(
+            datadata["amount"]["value"],
+            datadata["amount"]["currency"],
+            "GBP"
+        )
+        amount = round(amount, 2)
+
+        # Now we have all the data we need, we can overwrite the big block of data, 
+        # then move to putting the data in GSheets!
+        data = (name, amount, comment)
+        print(data)
 
 
 class FlaskApplication(DataHandler):
